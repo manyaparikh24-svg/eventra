@@ -1,5 +1,11 @@
 <?php
 
+if (basename(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)) === 'style.css') {
+    header('Content-Type: text/css');
+    readfile(__DIR__ . '/style.css');
+    exit;
+}
+
 $requestPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $page = basename($requestPath);
 
