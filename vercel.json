@@ -1,20 +1,27 @@
 {
   "functions": {
-    "api/*.php": {
+    "api/index.php": {
       "runtime": "vercel-php@0.9.0"
     }
   },
+  "headers": [
+    {
+      "source": "/style.css",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/css"
+        }
+      ]
+    }
+  ],
   "routes": [
     {
       "src": "/",
       "dest": "/api/index.php"
     },
     {
-      "src": "/style.css",
-      "dest": "/api/style.css"
-    },
-    {
-      "src": "/(.+\\.php)",
+      "src": "/(.*\\.php)",
       "dest": "/api/$1"
     }
   ]
