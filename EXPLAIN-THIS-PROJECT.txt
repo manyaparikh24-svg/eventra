@@ -1,0 +1,88 @@
+EVENTRA - HOW TO EXPLAIN YOUR PROJECT
+=======================================
+
+THE ONE-LINE PITCH
+-------------------
+"Eventra is a website where organizers list events, attendees browse and
+book tickets, and an admin approves events before they go public. It's
+built with HTML/CSS for the look, JavaScript for small interactivity,
+PHP for the logic, and MySQL for storage."
+
+THE 3 DATABASE TABLES (draw this if asked)
+-------------------------------------------
+users     -> everyone who signs up. Has a "role": attendee, organizer, or admin.
+events    -> every event. Knows WHO made it (organizer_id) and its "status"
+             (pending / approved / rejected / cancelled).
+bookings  -> every ticket booked. Knows WHO booked it (user_id) and WHICH
+             event (event_id).
+
+Think of it as: one organizer -> many events. One event -> many bookings.
+
+HOW A PAGE WORKS (the pattern EVERY page follows)
+---------------------------------------------------
+1. include "db.php"     -> connects to the database
+2. Write a SQL question  -> e.g. "SELECT * FROM events WHERE status='approved'"
+3. Run it                -> mysqli_query() or mysqli_stmt_execute()
+4. Loop through results  -> while ($row = mysqli_fetch_assoc($result)) { ... }
+5. Print it as HTML      -> <?php echo $row['title']; ?>
+
+If you understand this 5-step pattern, you understand almost the whole
+project, because every page (home, my tickets, dashboards) just repeats it.
+
+WHAT EACH FILE DOES
+---------------------
+api/db.php          Connects to MySQL. Locally uses XAMPP; online uses the
+                     live database details (kept OUT of the code, in Vercel's
+                     settings, for safety).
+api/header.php       Top of every page: the purple navigation bar. Included
+                     by every other page so we don't repeat that HTML 12 times.
+api/footer.php       Bottom of every page: closes the HTML.
+api/index.php        HOME PAGE. Shows all approved events. Has the search/
+                     filter form (by category, city, date).
+api/register.php     New account sign-up. Turns the typed password into a
+                     scrambled "hash" (password_hash) before saving it -
+                     so even you can't see anyone's real password in the DB.
+api/login.php        Checks email + password, then starts a "session" so the
+                     site remembers who's logged in on every other page.
+api/logout.php       Clears the session.
+api/event.php        EVENT DETAILS PAGE. Shows one event's full info + a
+                     "Book Now" button (only visible to logged-in attendees).
+api/book.php         BOOKING PAGE. Attendee picks how many tickets. Checks
+                     there are enough seats left, reduces seats_left, creates
+                     a unique ticket_code, saves the booking.
+api/confirmation.php Shows the ticket after a successful booking.
+api/my-tickets.php   ATTENDEE DASHBOARD. Lists everything that attendee has
+                     booked.
+api/organizer.php    ORGANIZER DASHBOARD. Form to add a new event (goes in
+                     as "pending"), plus a list of their own events with a
+                     Cancel button. This covers "Manage My Events" too.
+api/admin.php        ADMIN DASHBOARD. Approve/reject pending events, see all
+                     events and all users.
+api/contact.php      About + Contact page (static).
+public/style.css     All the colors/layout/spacing for the whole site.
+vercel.json          Tells Vercel how to run the PHP files when deployed.
+schema.sql           The SQL that builds your 3 tables + sample events.
+                     Run this once in phpMyAdmin, and once in your live DB.
+
+COMMON THINGS A TEACHER MIGHT CHANGE (and what breaks)
+---------------------------------------------------------
+- Rename a column (e.g. "seats_left" to "seats") -> every $row['seats_left']
+  in that page breaks with "Undefined array key". FIX: find every
+  $row['old_name'] in that file and change it to match the column name.
+- Change a form's "name" attribute (e.g. name="email" to name="mail")
+  -> $_POST['email'] on the PHP side becomes empty/undefined. FIX: make
+  sure the HTML input's "name" and the PHP's $_POST[...] match exactly.
+- Remove "session_start()" from db.php -> logins stop working, since PHP
+  forgets who's logged in between pages.
+- Change status values (e.g. 'approved' to 'active') -> queries that say
+  WHERE status = 'approved' return nothing. FIX: check the ENUM in the
+  table matches what the code is searching for.
+- Break a SQL query (typo in a table/column name) -> the whole page goes
+  blank or shows a database error. FIX: read the error message, it names
+  the exact table/column it couldn't find.
+
+THE REVENUE MODEL (if asked "how does this make money?")
+------------------------------------------------------------
+"The platform takes a commission on every paid ticket booked, and
+organizers can pay for featured placement to appear higher in listings -
+the same way real ticketing platforms like BookMyShow or Eventbrite work."
