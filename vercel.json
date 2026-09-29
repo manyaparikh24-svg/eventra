@@ -4,25 +4,18 @@
       "runtime": "vercel-php@0.9.0"
     }
   },
-  "headers": [
-    {
-      "source": "/style.css",
-      "headers": [
-        {
-          "key": "Content-Type",
-          "value": "text/css"
-        }
-      ]
-    }
-  ],
   "routes": [
+    {
+      "src": "/style.css",
+      "dest": "/api/style.css"
+    },
     {
       "src": "/",
       "dest": "/api/index.php"
     },
     {
       "src": "/(.*\\.php)",
-      "dest": "/api/$1"
+      "dest": "/api/index.php"
     }
   ]
 }
