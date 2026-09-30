@@ -1,7 +1,11 @@
+```php
 <?php
 
 require_once "db.php";
-require_once "razorpay_config.php";
+
+/* Razorpay credentials from Vercel Environment Variables */
+$razorpayKeyId = getenv('RAZORPAY_KEY_ID');
+$razorpayKeySecret = getenv('RAZORPAY_KEY_SECRET');
 
 header("Content-Type: application/json");
 
@@ -20,6 +24,15 @@ if ($event_id <= 0 || $num_tickets <= 0) {
     echo json_encode([
         "success" => false,
         "message" => "Invalid event or ticket quantity."
+    ]);
+    exit;
+}
+
+/* Check Razorpay credentials */
+if (!$razorpayKeyId || !$razorpayKeySecret) {
+    echo json_encode([
+        "success" => false,
+        "message" => "Razorpay credentials are not configured."
     ]);
     exit;
 }
@@ -64,7 +77,7 @@ $amount_paise = (int) round($total_amount * 100);
 /* Unique receipt */
 $receipt = "EVENTRA_" . time() . "_" . $event_id;
 
-/* Razorpay Order API */
+/* Razorpay Order API data */
 $data = [
     "amount" => $amount_paise,
     "currency" => "INR",
@@ -76,11 +89,16 @@ $data = [
     ]
 ];
 
+/* Create Razorpay order */
 $ch = curl_init("https://api.razorpay.com/v1/orders");
 
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_USERPWD, RAZORPAY_KEY_ID . ":" . RAZORPAY_KEY_SECRET);
+curl_setopt(
+    $ch,
+    CURLOPT_USERPWD,
+    $razorpayKeyId . ":" . $razorpayKeySecret
+);
 curl_setopt($ch, CURLOPT_HTTPHEADER, [
     "Content-Type: application/json"
 ]);
@@ -94,6 +112,7 @@ if (curl_errno($ch)) {
         "success" => false,
         "message" => "Razorpay connection error."
     ]);
+
     curl_close($ch);
     exit;
 }
@@ -108,7 +127,7 @@ if ($http_code >= 200 && $http_code < 300 && isset($order['id'])) {
         "success" => true,
         "order_id" => $order['id'],
         "amount" => $amount_paise,
-        "key_id" => RAZORPAY_KEY_ID,
+        "key_id" => $razorpayKeyId,
         "event_title" => $event['title']
     ]);
 
@@ -120,4 +139,6 @@ if ($http_code >= 200 && $http_code < 300 && isset($order['id'])) {
         "razorpay_error" => $order['error']['description'] ?? "Unknown error"
     ]);
 }
+
 ?>
+```
