@@ -1,7 +1,7 @@
 <?php
 
 include "db.php";
-require_once "razorpay_config.php";
+require_once  __DIR__ . "/razorpay_config.php";
 
 if (($_SESSION['role'] ?? '') !== 'attendee') {
     header("Location: login.php");
