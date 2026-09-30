@@ -6,15 +6,15 @@
   },
   "routes": [
     {
-      "src": "/style.css",
-      "dest": "/api/style.css"
-    },
-    {
-      "src": "/",
+      "src": "/(.*\\.php)",
       "dest": "/api/index.php"
     },
     {
-      "src": "/(.*\\.php)",
+      "src": "/style\\.css",
+      "dest": "/api/index.php"
+    },
+    {
+      "src": "/",
       "dest": "/api/index.php"
     }
   ]
