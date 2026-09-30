@@ -1,4 +1,4 @@
-```php
+
 <?php
 
 require_once "db.php";
@@ -141,4 +141,4 @@ if ($http_code >= 200 && $http_code < 300 && isset($order['id'])) {
 }
 
 ?>
-```
+
