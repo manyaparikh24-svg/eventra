@@ -1,15 +1,16 @@
-
 <?php
+
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
 require_once "db.php";
 
-/* Razorpay credentials from Vercel Environment Variables */
-$razorpayKeyId = getenv('RAZORPAY_KEY_ID');
-$razorpayKeySecret = getenv('RAZORPAY_KEY_SECRET');
-
 header("Content-Type: application/json");
 
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'attendee') {
+$razorpayKeyId = getenv("RAZORPAY_KEY_ID");
+$razorpayKeySecret = getenv("RAZORPAY_KEY_SECRET");
+
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'attendee') {
     echo json_encode([
         "success" => false,
         "message" => "Please login as attendee."
@@ -17,8 +18,8 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'attendee') {
     exit;
 }
 
-$event_id = isset($_POST['event_id']) ? (int)$_POST['event_id'] : 0;
-$num_tickets = isset($_POST['num_tickets']) ? (int)$_POST['num_tickets'] : 0;
+$event_id = (int)($_POST['event_id'] ?? 0);
+$num_tickets = (int)($_POST['num_tickets'] ?? 0);
 
 if ($event_id <= 0 || $num_tickets <= 0) {
     echo json_encode([
@@ -28,7 +29,6 @@ if ($event_id <= 0 || $num_tickets <= 0) {
     exit;
 }
 
-/* Check Razorpay credentials */
 if (!$razorpayKeyId || !$razorpayKeySecret) {
     echo json_encode([
         "success" => false,
@@ -37,7 +37,6 @@ if (!$razorpayKeyId || !$razorpayKeySecret) {
     exit;
 }
 
-/* Get event details */
 $stmt = mysqli_prepare(
     $conn,
     "SELECT event_id, title, price, seats_left
@@ -59,7 +58,6 @@ if (!$event) {
     exit;
 }
 
-/* Check seats */
 if ($num_tickets > $event['seats_left']) {
     echo json_encode([
         "success" => false,
@@ -68,28 +66,17 @@ if ($num_tickets > $event['seats_left']) {
     exit;
 }
 
-/* Calculate amount from database */
 $total_amount = $event['price'] * $num_tickets;
+$amount_paise = (int)round($total_amount * 100);
 
-/* Razorpay uses paise */
-$amount_paise = (int) round($total_amount * 100);
-
-/* Unique receipt */
 $receipt = "EVENTRA_" . time() . "_" . $event_id;
 
-/* Razorpay Order API data */
 $data = [
     "amount" => $amount_paise,
     "currency" => "INR",
-    "receipt" => $receipt,
-    "notes" => [
-        "event_id" => $event_id,
-        "user_id" => $_SESSION['user_id'],
-        "num_tickets" => $num_tickets
-    ]
+    "receipt" => $receipt
 ];
 
-/* Create Razorpay order */
 $ch = curl_init("https://api.razorpay.com/v1/orders");
 
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -107,13 +94,14 @@ curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
 $response = curl_exec($ch);
 $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
-if (curl_errno($ch)) {
+if ($response === false) {
+    $error = curl_error($ch);
+    curl_close($ch);
+
     echo json_encode([
         "success" => false,
-        "message" => "Razorpay connection error."
+        "message" => "Razorpay connection error: " . $error
     ]);
-
-    curl_close($ch);
     exit;
 }
 
@@ -136,9 +124,6 @@ if ($http_code >= 200 && $http_code < 300 && isset($order['id'])) {
     echo json_encode([
         "success" => false,
         "message" => "Unable to create Razorpay order.",
-        "razorpay_error" => $order['error']['description'] ?? "Unknown error"
+        "razorpay_error" => $order['error']['description'] ?? $response
     ]);
 }
-
-?>
-
