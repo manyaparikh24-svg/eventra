@@ -79,6 +79,7 @@ document.getElementById("pay-button").onclick = async function () {
 
     formData.append("event_id", "<?php echo $eventId; ?>");
     formData.append("num_tickets", "<?php echo $qty; ?>");
+    formData.append("user_id", "<?php echo $_SESSION['user_id']; ?>");
 
     try {
 
