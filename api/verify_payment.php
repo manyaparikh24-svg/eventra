@@ -1,115 +1,152 @@
 <?php
 
+error_reporting(0);
+ini_set('display_errors', 0);
+
 require_once "db.php";
-require_once "razorpay_config.php";
 
 header("Content-Type: application/json");
 
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'attendee') {
+$razorpayKeySecret = getenv("RAZORPAY_KEY_SECRET");
+
+$userId = (int)($_POST['user_id'] ?? 0);
+$eventId = (int)($_POST['event_id'] ?? 0);
+$numTickets = (int)($_POST['num_tickets'] ?? 0);
+
+$paymentId = $_POST['razorpay_payment_id'] ?? '';
+$orderId = $_POST['razorpay_order_id'] ?? '';
+$signature = $_POST['razorpay_signature'] ?? '';
+
+if (
+    $userId <= 0 ||
+    $eventId <= 0 ||
+    $numTickets <= 0 ||
+    empty($paymentId) ||
+    empty($orderId) ||
+    empty($signature)
+) {
+
     echo json_encode([
         "success" => false,
-        "message" => "Please login again."
+        "message" => "Invalid payment information."
     ]);
+
     exit;
 }
 
-$payment_id = $_POST['razorpay_payment_id'] ?? '';
-$order_id   = $_POST['razorpay_order_id'] ?? '';
-$signature  = $_POST['razorpay_signature'] ?? '';
+if (!$razorpayKeySecret) {
 
-$event_id   = (int) ($_POST['event_id'] ?? 0);
-$num_tickets = (int) ($_POST['num_tickets'] ?? 0);
-
-if (!$payment_id || !$order_id || !$signature) {
     echo json_encode([
         "success" => false,
-        "message" => "Payment information is incomplete."
+        "message" => "Razorpay secret is not configured."
     ]);
+
     exit;
 }
 
 /* Verify Razorpay signature */
-$generated_signature = hash_hmac(
-    'sha256',
-    $order_id . "|" . $payment_id,
-    RAZORPAY_KEY_SECRET
+$signatureData = $orderId . "|" . $paymentId;
+
+$expectedSignature = hash_hmac(
+    "sha256",
+    $signatureData,
+    $razorpayKeySecret
 );
 
-if (!hash_equals($generated_signature, $signature)) {
+if (!hash_equals($expectedSignature, $signature)) {
+
     echo json_encode([
         "success" => false,
         "message" => "Payment verification failed."
     ]);
+
+    exit;
+}
+
+/* Check user */
+$userStmt = mysqli_prepare(
+    $conn,
+    "SELECT user_id, role
+     FROM users
+     WHERE user_id = ?"
+);
+
+mysqli_stmt_bind_param(
+    $userStmt,
+    "i",
+    $userId
+);
+
+mysqli_stmt_execute($userStmt);
+
+$user = mysqli_fetch_assoc(
+    mysqli_stmt_get_result($userStmt)
+);
+
+if (!$user || $user['role'] !== 'attendee') {
+
+    echo json_encode([
+        "success" => false,
+        "message" => "Invalid attendee."
+    ]);
+
     exit;
 }
 
 /* Get event */
 $stmt = mysqli_prepare(
     $conn,
-    "SELECT event_id, title, price, seats_left
+    "SELECT *
      FROM events
      WHERE event_id = ? AND status = 'approved'"
 );
 
-mysqli_stmt_bind_param($stmt, "i", $event_id);
+mysqli_stmt_bind_param(
+    $stmt,
+    "i",
+    $eventId
+);
+
 mysqli_stmt_execute($stmt);
 
-$result = mysqli_stmt_get_result($stmt);
-$event = mysqli_fetch_assoc($result);
+$event = mysqli_fetch_assoc(
+    mysqli_stmt_get_result($stmt)
+);
 
 if (!$event) {
+
     echo json_encode([
         "success" => false,
         "message" => "Event not found."
     ]);
+
     exit;
 }
 
 /* Check seats */
-if ($num_tickets <= 0 || $num_tickets > $event['seats_left']) {
+if ($numTickets > $event['seats_left']) {
+
     echo json_encode([
         "success" => false,
         "message" => "Not enough seats available."
     ]);
+
     exit;
 }
 
-$total_amount = $event['price'] * $num_tickets;
+/* Calculate total */
+$totalAmount =
+    $event['price'] * $numTickets;
 
-/* Generate ticket code */
-$ticket_code = "EVT" . strtoupper(substr(md5(uniqid()), 0, 10));
+/* Generate ticket */
+$ticketCode =
+    "EVT" . strtoupper(bin2hex(random_bytes(5)));
 
-/* Start transaction */
-mysqli_begin_transaction($conn);
+/* Payment method */
+$paymentMethod = "Razorpay";
 
-try {
-
-    /* Reduce seats */
-    $update = mysqli_prepare(
-        $conn,
-        "UPDATE events
-         SET seats_left = seats_left - ?
-         WHERE event_id = ?
-         AND seats_left >= ?"
-    );
-
-    mysqli_stmt_bind_param(
-        $update,
-        "iii",
-        $num_tickets,
-        $event_id,
-        $num_tickets
-    );
-
-    mysqli_stmt_execute($update);
-
-    if (mysqli_stmt_affected_rows($update) !== 1) {
-        throw new Exception("Seats are no longer available.");
-    }
-
-
-    /* Insert booking */
-$booking = mysqli_prepare(
+/* Insert booking */
+$stmt = mysqli_prepare(
     $conn,
     "INSERT INTO bookings
     (
@@ -118,48 +155,51 @@ $booking = mysqli_prepare(
         event_id,
         num_tickets,
         total_amount,
-        payment_method,
-        razorpay_order_id,
-        razorpay_payment_id,
-        payment_status
+        payment_method
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    VALUES (?, ?, ?, ?, ?, ?)"
 );
-
-$payment_method = "Razorpay";
-$payment_status = "paid";
 
 mysqli_stmt_bind_param(
-    $booking,
-    "siiidssss",
-    $ticket_code,
-    $_SESSION['user_id'],
-    $event_id,
-    $num_tickets,
-    $total_amount,
-    $payment_method,
-    $order_id,
-    $payment_id,
-    $payment_status
+    $stmt,
+    "siiids",
+    $ticketCode,
+    $userId,
+    $eventId,
+    $numTickets,
+    $totalAmount,
+    $paymentMethod
 );
 
-    mysqli_stmt_execute($booking);
-
-    mysqli_commit($conn);
-
-    echo json_encode([
-        "success" => true,
-        "ticket_code" => $ticket_code
-    ]);
-
-} catch (Exception $e) {
-
-    mysqli_rollback($conn);
+if (!mysqli_stmt_execute($stmt)) {
 
     echo json_encode([
         "success" => false,
-        "message" => $e->getMessage()
+        "message" => "Could not create booking."
     ]);
+
+    exit;
 }
 
-?>
+/* Reduce seats */
+$stmt = mysqli_prepare(
+    $conn,
+    "UPDATE events
+     SET seats_left = seats_left - ?
+     WHERE event_id = ?"
+);
+
+mysqli_stmt_bind_param(
+    $stmt,
+    "ii",
+    $numTickets,
+    $eventId
+);
+
+mysqli_stmt_execute($stmt);
+
+/* Success */
+echo json_encode([
+    "success" => true,
+    "ticket_code" => $ticketCode
+]);
