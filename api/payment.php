@@ -2,40 +2,160 @@
 
 include "db.php";
 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+/* Only attendees can book */
 if (($_SESSION['role'] ?? '') !== 'attendee') {
     header("Location: login.php");
     exit;
 }
 
-$eventId = (int) ($_POST['event_id'] ?? 0);
-$qty     = (int) ($_POST['num_tickets'] ?? 0);
+$userId = (int)($_SESSION['user_id'] ?? 0);
 
+/*
+ * STEP 1:
+ * If the user clicked the Pay button,
+ * create the booking.
+ */
+if (isset($_POST['confirm_payment'])) {
+
+    $eventId = (int)($_POST['event_id'] ?? 0);
+    $qty = (int)($_POST['num_tickets'] ?? 0);
+
+    if ($userId <= 0 || $eventId <= 0 || $qty <= 0) {
+        die("Invalid booking details.");
+    }
+
+    /* Get event */
+    $stmt = mysqli_prepare(
+        $conn,
+        "SELECT *
+         FROM events
+         WHERE event_id = ? AND status = 'approved'"
+    );
+
+    mysqli_stmt_bind_param($stmt, "i", $eventId);
+    mysqli_stmt_execute($stmt);
+
+    $result = mysqli_stmt_get_result($stmt);
+    $event = mysqli_fetch_assoc($result);
+
+    if (!$event) {
+        die("Event not found.");
+    }
+
+    /* Check available seats */
+    if ($qty > $event['seats_left']) {
+        die("Not enough seats available.");
+    }
+
+    /* Calculate total */
+    $total = $qty * $event['price'];
+
+    /* Generate ticket code */
+    $ticketCode = "EVT" . strtoupper(bin2hex(random_bytes(5)));
+
+    /* Demo payment */
+    $paymentMethod = "Demo Payment";
+
+    /* Insert booking */
+    $stmt = mysqli_prepare(
+        $conn,
+        "INSERT INTO bookings
+        (ticket_code, user_id, event_id, num_tickets, total_amount, payment_method)
+        VALUES (?, ?, ?, ?, ?, ?)"
+    );
+
+    mysqli_stmt_bind_param(
+        $stmt,
+        "siiids",
+        $ticketCode,
+        $userId,
+        $eventId,
+        $qty,
+        $total,
+        $paymentMethod
+    );
+
+    if (!mysqli_stmt_execute($stmt)) {
+        die("Booking failed: " . mysqli_error($conn));
+    }
+
+    /* Reduce available seats */
+    $stmt = mysqli_prepare(
+        $conn,
+        "UPDATE events
+         SET seats_left = seats_left - ?
+         WHERE event_id = ?"
+    );
+
+    mysqli_stmt_bind_param(
+        $stmt,
+        "ii",
+        $qty,
+        $eventId
+    );
+
+    mysqli_stmt_execute($stmt);
+
+    /* Go to confirmation page */
+    header(
+        "Location: confirmation.php?code=" .
+        urlencode($ticketCode)
+    );
+    exit;
+}
+
+
+/*
+ * STEP 2:
+ * Normal checkout page.
+ */
+
+/* Get event and quantity */
+$eventId = (int)($_POST['event_id'] ?? 0);
+$qty = (int)($_POST['num_tickets'] ?? 0);
+
+if ($eventId <= 0 || $qty <= 0) {
+    header("Location: index.php");
+    exit;
+}
+
+/* Get event */
 $stmt = mysqli_prepare(
     $conn,
-    "SELECT * FROM events
+    "SELECT *
+     FROM events
      WHERE event_id = ? AND status = 'approved'"
 );
 
 mysqli_stmt_bind_param($stmt, "i", $eventId);
 mysqli_stmt_execute($stmt);
 
-$event = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+$result = mysqli_stmt_get_result($stmt);
+$event = mysqli_fetch_assoc($result);
 
-include "header.php";
-
-if (!$event || $qty < 1) {
-    echo "<p>Something went wrong. Please start the booking again.</p>";
+if (!$event) {
+    include "header.php";
+    echo "<p class='error'>Event not found.</p>";
     include "footer.php";
     exit;
 }
 
+/* Check seats */
 if ($qty > $event['seats_left']) {
+    include "header.php";
     echo "<p class='error'>Not enough seats available.</p>";
     include "footer.php";
     exit;
 }
 
+/* Calculate total */
 $total = $qty * $event['price'];
+
+include "header.php";
 ?>
 
 <div class="detail-box">
@@ -43,7 +163,9 @@ $total = $qty * $event['price'];
     <h2>Checkout</h2>
 
     <p>
-        <?php echo htmlspecialchars($event['title']); ?>
+        <strong>
+            <?php echo htmlspecialchars($event['title']); ?>
+        </strong>
         &mdash;
         <?php echo $qty; ?> ticket(s)
     </p>
@@ -52,163 +174,36 @@ $total = $qty * $event['price'];
         Total: Rs. <?php echo number_format($total, 2); ?>
     </p>
 
-    <button type="button" id="pay-button">
-        Pay Rs. <?php echo number_format($total, 2); ?>
-    </button>
+    <form method="POST" action="payment.php">
 
-    <p id="payment-message" class="error"></p>
+        <input
+            type="hidden"
+            name="event_id"
+            value="<?php echo $eventId; ?>"
+        >
+
+        <input
+            type="hidden"
+            name="num_tickets"
+            value="<?php echo $qty; ?>"
+        >
+
+        <input
+            type="hidden"
+            name="confirm_payment"
+            value="1"
+        >
+
+        <button type="submit" class="btn">
+            Pay Rs. <?php echo number_format($total, 2); ?>
+        </button>
+
+    </form>
+
+    <p style="margin-top:15px; color:#777;">
+        Demo payment mode
+    </p>
 
 </div>
-
-
-<!-- Razorpay Checkout -->
-<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-
-<script>
-
-document.getElementById("pay-button").onclick = async function () {
-
-    const button = document.getElementById("pay-button");
-    const message = document.getElementById("payment-message");
-
-    button.disabled = true;
-    button.innerText = "Creating payment...";
-    message.innerText = "";
-
-    const formData = new FormData();
-
-    formData.append("event_id", "<?php echo $eventId; ?>");
-    formData.append("num_tickets", "<?php echo $qty; ?>");
-    formData.append("user_id", "<?php echo $_SESSION['user_id']; ?>");
-
-    try {
-
-        /* Create Razorpay order */
-        const response = await fetch("create_order.php", {
-            method: "POST",
-            body: formData
-        });
-
-        const order = await response.json();
-
-        if (!order.success) {
-            throw new Error(order.message || "Unable to create order.");
-        }
-
-        /* Razorpay Checkout */
-        const options = {
-
-            key: order.key_id,
-
-            amount: order.amount,
-
-            currency: "INR",
-
-            name: "Eventra",
-
-            description: order.event_title,
-
-            order_id: order.order_id,
-
-            handler: async function (paymentResponse) {
-
-                button.innerText = "Verifying payment...";
-
-                const verifyData = new FormData();
-
-                verifyData.append(
-                    "razorpay_payment_id",
-                    paymentResponse.razorpay_payment_id
-                );
-
-                verifyData.append(
-                    "razorpay_order_id",
-                    paymentResponse.razorpay_order_id
-                );
-
-                verifyData.append(
-                    "razorpay_signature",
-                    paymentResponse.razorpay_signature
-                );
-
-                verifyData.append(
-                    "event_id",
-                    "<?php echo $eventId; ?>"
-                );
-
-                verifyData.append(
-                    "num_tickets",
-                    "<?php echo $qty; ?>"
-                );
-
-                const verifyResponse = await fetch(
-                    "verify_payment.php",
-                    {
-                        method: "POST",
-                        body: verifyData
-                    }
-                );
-
-                const result = await verifyResponse.json();
-
-                if (result.success) {
-
-                    window.location.href =
-                        "confirmation.php?code=" +
-                        encodeURIComponent(result.ticket_code);
-
-                } else {
-
-                    message.innerText =
-                        result.message || "Payment verification failed.";
-
-                    button.disabled = false;
-                    button.innerText =
-                        "Pay Rs. <?php echo number_format($total, 2); ?>";
-                }
-            },
-
-            modal: {
-                ondismiss: function () {
-
-                    button.disabled = false;
-
-                    button.innerText =
-                        "Pay Rs. <?php echo number_format($total, 2); ?>";
-                }
-            },
-
-            theme: {
-                color: "#3399cc"
-            }
-        };
-
-        const razorpay = new Razorpay(options);
-
-        razorpay.on("payment.failed", function (response) {
-
-            message.innerText =
-                "Payment failed. Please try again.";
-
-            button.disabled = false;
-
-            button.innerText =
-                "Pay Rs. <?php echo number_format($total, 2); ?>";
-        });
-
-        razorpay.open();
-
-    } catch (error) {
-
-        message.innerText = error.message;
-
-        button.disabled = false;
-
-        button.innerText =
-            "Pay Rs. <?php echo number_format($total, 2); ?>";
-    }
-};
-
-</script>
 
 <?php include "footer.php"; ?>
